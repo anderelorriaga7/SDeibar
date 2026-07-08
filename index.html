@@ -671,6 +671,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 20V11M12 20V5M19 20v-7"/></svg>
       Datos
     </button>
+    <button class="nav-btn" data-tab="usuarios" id="usuariosNavBtn" style="display:none;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><path d="M3 20c.7-3 3.2-5 6-5s5.3 2 6 5"/><circle cx="18" cy="8" r="2.4"/><path d="M15.5 15.3c1.9.6 3.4 2.2 3.9 4.7"/></svg>
+      Usuarios
+    </button>
   </nav>
 </div>
 
@@ -746,8 +750,8 @@
      CONFIGURA AQUÍ TU PROYECTO DE SUPABASE
      (Project Settings → API, en tu panel de Supabase)
      ============================================================ */
-  const SUPABASE_URL = 'https://rielnwkiiahnwmrdytiz.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJpZWxud2tpaWFobndtcmR5dGl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0NjU3NjIsImV4cCI6MjA5OTA0MTc2Mn0.Cqa9O2M1OwrQKop_8Gb4WMlM8XPl7GCJ9np-Is0VxSo';
+  const SUPABASE_URL = 'https://TU-PROYECTO.supabase.co';
+  const SUPABASE_ANON_KEY = 'TU-CLAVE-ANON-PUBLICA';
 
   const sb = (window.supabase && SUPABASE_URL.indexOf('TU-PROYECTO')===-1)
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -979,6 +983,12 @@
     modeBadge.classList.toggle('editor', isEditor);
     fabBtn.style.display = (isEditor && currentTab==='plantilla') ? 'flex' : 'none';
     teamNameInput.readOnly = !isEditor;
+    const usuariosBtn = $('#usuariosNavBtn');
+    if(usuariosBtn) usuariosBtn.style.display = isEditor ? 'flex' : 'none';
+    if(!isEditor && currentTab==='usuarios'){
+      currentTab = 'plantilla';
+      document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab==='plantilla'));
+    }
     updateGaleriaDot();
   }
 
@@ -1188,6 +1198,7 @@
     else if(currentTab==='galeria') renderGaleria();
     else if(currentTab==='lesiones') renderLesiones();
     else if(currentTab==='datos') renderDatos();
+    else if(currentTab==='usuarios') renderUsuarios();
   }
 
   function renderPlantilla(){
@@ -2003,6 +2014,117 @@
       saveInjuries();
       closeModal();
       render();
+    });
+  }
+
+  /* ---------------- USUARIOS (solo admin) ---------------- */
+  async function fetchProfiles(){
+    const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending: true });
+    if(error){ console.error(error); return []; }
+    return data;
+  }
+
+  async function renderUsuarios(){
+    if(!isEditor){ main.innerHTML = ''; return; }
+    main.innerHTML = `<div class="loading-msg">Cargando usuarios…</div>`;
+    const profiles = await fetchProfiles();
+    let html = `<h2 class="section-title">Usuarios (${profiles.length})</h2>`;
+    if(profiles.length===0){
+      html += `<div class="empty-state"><p>No hay usuarios todavía.</p></div>`;
+    } else {
+      html += profiles.map(u=>{
+        const isMe = currentUser && u.id === currentUser.id;
+        return `<div class="player-media-card" style="cursor:default;">
+          <div class="num-badge" style="background:${u.role==='admin' ? 'var(--gold)' : 'var(--pitch-mid)'}; color:${u.role==='admin' ? 'var(--pitch-dark)' : 'var(--text)'};">${u.role==='admin'?'A':'V'}</div>
+          <div class="player-info">
+            <div class="player-name">${escapeHtml(u.email||'—')}${isMe?' <span style="color:var(--text-dim); font-weight:400;">(tú)</span>':''}</div>
+            <div class="player-pos">${u.role==='admin' ? 'Administrador' : 'Solo lectura'}</div>
+          </div>
+          <select class="role-select" data-user-id="${u.id}" ${isMe ? 'disabled' : ''} style="background:var(--pitch-dark); border:1px solid rgba(220,230,218,0.15); border-radius:8px; color:var(--text); font-size:12px; padding:6px;">
+            <option value="viewer" ${u.role==='viewer'?'selected':''}>Solo lectura</option>
+            <option value="admin" ${u.role==='admin'?'selected':''}>Administrador</option>
+          </select>
+          <button class="icon-btn" data-del-user="${u.id}" data-del-user-email="${escapeHtml(u.email||'')}" ${isMe ? 'disabled style="opacity:0.3;"' : ''}>✕</button>
+        </div>`;
+      }).join('');
+    }
+    html += `<button class="new-match-btn" id="addUserBtn">+ Añadir usuario</button>`;
+    html += `<p class="share-note">Los usuarios "Solo lectura" pueden ver toda la app pero no editar nada. Los "Administrador" pueden editar y también gestionar otros usuarios.</p>`;
+    main.innerHTML = html;
+
+    $('#addUserBtn').addEventListener('click', openAddUserModal);
+    main.querySelectorAll('.role-select').forEach(sel=>{
+      sel.addEventListener('change', async ()=>{
+        const userId = sel.dataset.userId;
+        const newRole = sel.value;
+        sel.disabled = true;
+        const { error } = await sb.from('profiles').update({ role: newRole }).eq('id', userId);
+        if(error){ alert('No se ha podido cambiar el rol: ' + error.message); }
+        renderUsuarios();
+      });
+    });
+    main.querySelectorAll('[data-del-user]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const userId = btn.dataset.delUser;
+        const email = btn.dataset.delUserEmail;
+        openConfirmModal({
+          title: 'Eliminar usuario',
+          message: `Vas a eliminar el acceso de ${escapeHtml(email)}. No podrá volver a entrar hasta que se le cree una cuenta nueva.`,
+          confirmLabel: 'Eliminar definitivamente',
+          danger: true,
+          onConfirm: async ()=>{
+            const { data, error } = await sb.functions.invoke('admin-users', { body: { action: 'delete', userId } });
+            if(error || (data && data.error)){ alert('No se ha podido eliminar: ' + (error ? error.message : data.error)); }
+            renderUsuarios();
+          }
+        });
+      });
+    });
+  }
+
+  function openAddUserModal(){
+    modalContent.innerHTML = `
+      <h3>Añadir usuario</h3>
+      <p class="modal-sub">Crea el acceso para una nueva persona. Luego pásale este email y contraseña para que pueda entrar.</p>
+      <div class="field"><label>Email</label><input id="newUserEmail" type="email" placeholder="persona@ejemplo.com" /></div>
+      <div class="field"><label>Contraseña</label><input id="newUserPass" type="text" placeholder="Mínimo 6 caracteres" /></div>
+      <div class="field"><label>Permisos</label>
+        <div class="pos-choice" id="roleChoice">
+          <button data-role="viewer" class="sel">Solo lectura</button>
+          <button data-role="admin">Administrador</button>
+        </div>
+      </div>
+      <div class="pin-error" id="newUserErr"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="cancelBtn">Cancelar</button>
+        <button class="btn btn-primary" id="createUserBtn">Crear usuario</button>
+      </div>
+    `;
+    modalOverlay.classList.add('open');
+    let selRole = 'viewer';
+    modalContent.querySelectorAll('#roleChoice button').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        modalContent.querySelectorAll('#roleChoice button').forEach(x=>x.classList.remove('sel'));
+        b.classList.add('sel'); selRole = b.dataset.role;
+      });
+    });
+    $('#cancelBtn').addEventListener('click', closeModal);
+    $('#createUserBtn').addEventListener('click', async ()=>{
+      const email = $('#newUserEmail').value.trim();
+      const password = $('#newUserPass').value;
+      if(!email || !email.includes('@')){ $('#newUserErr').textContent = 'Escribe un email válido.'; return; }
+      if(password.length<6){ $('#newUserErr').textContent = 'La contraseña debe tener al menos 6 caracteres.'; return; }
+      $('#createUserBtn').disabled = true;
+      $('#createUserBtn').textContent = 'Creando…';
+      const { data, error } = await sb.functions.invoke('admin-users', { body: { action:'create', email, password, role: selRole } });
+      if(error || (data && data.error)){
+        $('#newUserErr').textContent = (data && data.error) ? data.error : (error ? error.message : 'Error desconocido.');
+        $('#createUserBtn').disabled = false;
+        $('#createUserBtn').textContent = 'Crear usuario';
+        return;
+      }
+      closeModal();
+      renderUsuarios();
     });
   }
 
